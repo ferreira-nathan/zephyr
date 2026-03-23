@@ -41,11 +41,14 @@ export function ChatRoomPage() {
 
   useEffect(() => {
     if (convId && user && keypair) {
+      if (conversations.length === 0) {
+        useMessagesStore.getState().fetchConversations(user.id)
+      }
       fetchMessages(convId, keypair, {})
       subscribeToConversation(convId, keypair, conv)
     }
     return () => unsubscribe()
-  }, [convId, user, keypair, conv])
+  }, [convId, user, keypair, conv, conversations.length])
 
   useEffect(() => {
     msgsEndRef.current?.scrollIntoView({ behavior: 'smooth' })

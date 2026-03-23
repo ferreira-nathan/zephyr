@@ -117,9 +117,13 @@ export const useMessagesStore = create((set, get) => ({
         auto_delete_at: autoDeleteAt
       })
 
-      if (error) throw error('Send error:', error)
+      if (error) {
+        console.error('Send error:', error)
+        throw error
+      }
     } catch (error) {
       console.error('Failed to send message:', error)
+      alert("Erreur d'envoi: " + error.message)
     }
   },
 
