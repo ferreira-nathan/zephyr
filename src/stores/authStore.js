@@ -55,7 +55,7 @@ export const useAuthStore = create((set, get) => ({
       profile = upserted
     }
 
-    set({ user, profile, keypair: kp })
+    set({ user, profile, keypair: { ...kp, userId: user.id } })
   },
 
   signIn: async (email, password) => {
