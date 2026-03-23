@@ -49,11 +49,18 @@ export const useContactsStore = create((set, get) => ({
      
      if (existing && existing.length > 0) return existing[0].id
      
-     // Otherwise create new
-     if (error || !newConv) {
-       alert("Erreur création conversation: " + (error?.message || "Inconnue"));
-       return null;
-     }
+      // Otherwise create new
+      const { data: newConv, error } = await supabase
+        .from('conversations')
+        .insert({ type: 'direct' })
+        .select()
+        .single()
+
+      if (error || !newConv) {
+        alert("Erreur création conversation: " + (error?.message || "Inconnue"));
+        console.error("Error creating conversation:", error);
+        return null;
+      }
      
      // Add members
      const { error: memberError } = await supabase.from('conversation_members').insert([
