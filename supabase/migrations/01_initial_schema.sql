@@ -83,28 +83,29 @@ CREATE POLICY "Public profiles are viewable by everyone" ON public.profiles FOR 
 CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
 CREATE POLICY "Users can insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
 
+-- RLS Helper: Check if user is member of a conversation (Security Definer to avoid recursion)
+CREATE OR REPLACE FUNCTION is_member_of(conv_id uuid)
+RETURNS boolean AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.conversation_members
+    WHERE conversation_id = conv_id AND user_id = auth.uid()
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- Conversations: Users can see conversations they are a member of
-CREATE POLICY "Users can see their conversations" ON public.conversations FOR SELECT USING (
-  EXISTS (SELECT 1 FROM public.conversation_members WHERE conversation_id = id AND user_id = auth.uid())
-);
+CREATE POLICY "Users can see their conversations" ON public.conversations FOR SELECT USING (is_member_of(id) OR created_by = auth.uid());
 CREATE POLICY "Users can insert conversations" ON public.conversations FOR INSERT WITH CHECK (true);
 
 -- Conversation Members: Users can see members of their conversations
-CREATE POLICY "Users can see members of their conversations" ON public.conversation_members FOR SELECT USING (
-  EXISTS (SELECT 1 FROM public.conversation_members cm WHERE cm.conversation_id = conversation_members.conversation_id AND cm.user_id = auth.uid())
-);
+CREATE POLICY "Users can see members of their conversations" ON public.conversation_members FOR SELECT USING (is_member_of(conversation_id));
 CREATE POLICY "Users can insert members" ON public.conversation_members FOR INSERT WITH CHECK (true);
 
 -- Messages: Users can see and insert messages in their conversations
-CREATE POLICY "Users can see messages in their conversations" ON public.messages FOR SELECT USING (
-  EXISTS (SELECT 1 FROM public.conversation_members WHERE conversation_id = messages.conversation_id AND user_id = auth.uid())
-);
-CREATE POLICY "Users can insert messages" ON public.messages FOR INSERT WITH CHECK (
-  EXISTS (SELECT 1 FROM public.conversation_members WHERE conversation_id = messages.conversation_id AND user_id = auth.uid())
-);
-CREATE POLICY "Users can update message reactions" ON public.messages FOR UPDATE USING (
-  EXISTS (SELECT 1 FROM public.conversation_members WHERE conversation_id = messages.conversation_id AND user_id = auth.uid())
-);
+CREATE POLICY "Users can see messages in their conversations" ON public.messages FOR SELECT USING (is_member_of(conversation_id));
+CREATE POLICY "Users can insert messages" ON public.messages FOR INSERT WITH CHECK (is_member_of(conversation_id));
+CREATE POLICY "Users can update message reactions" ON public.messages FOR UPDATE USING (is_member_of(conversation_id));
 
 
 -- HELPER RPC FUNCTIONS

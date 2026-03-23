@@ -52,7 +52,7 @@ export const useContactsStore = create((set, get) => ({
       // Otherwise create new
       const { data: newConv, error } = await supabase
         .from('conversations')
-        .insert({ type: 'direct' })
+        .insert({ type: 'direct', created_by: myUserId })
         .select()
         .single()
 
