@@ -68,14 +68,12 @@ export const useMessagesStore = create((set, get) => ({
             plain = await decryptGroupMessage(msg.ciphertext, msg.iv, groupKey)
           }
         } else {
-          const senderProfile = msg.sender
-          if (senderProfile && msg.ciphertext && msg.iv) {
-            const senderPK = senderProfile.id === keypair?.userId
-              ? keypair.publicKey
-              : senderProfile.public_key
-            if (senderPK) {
-              plain = await decryptMessage(msg.ciphertext, msg.iv, senderPK, keypair.privateKey)
-            }
+          // 1:1 Chat: Use the OTHER person's public key to decrypt (works for both directions in X25519)
+          const otherMember = conv?.members?.find(m => m.user_id !== keypair?.userId)
+          const otherPK = otherMember?.profile?.public_key
+          
+          if (otherPK && msg.ciphertext && msg.iv) {
+            plain = await decryptMessage(msg.ciphertext, msg.iv, otherPK, keypair.privateKey)
           }
         }
         return { ...msg, decryptedContent: plain }
@@ -138,6 +136,7 @@ export const useMessagesStore = create((set, get) => ({
       
     if (uploadError) {
       console.error('Upload error:', uploadError)
+      alert("Erreur d'upload média: " + uploadError.message)
       return { error: uploadError }
     }
     
@@ -183,8 +182,12 @@ export const useMessagesStore = create((set, get) => ({
               const groupKey = loadGroupKey(convId)
               if (groupKey && msg.iv !== 'none') plain = await decryptGroupMessage(msg.ciphertext, msg.iv, groupKey)
             } else {
-              const senderPK = sender?.id === keypair?.userId ? keypair.publicKey : sender?.public_key
-              if (senderPK && msg.iv !== 'none') plain = await decryptMessage(msg.ciphertext, msg.iv, senderPK, keypair.privateKey)
+              // 1:1 Chat: Use the OTHER person's public key
+              const otherMember = conv?.members?.find(m => m.user_id !== keypair?.userId)
+              const otherPK = otherMember?.profile?.public_key
+              if (otherPK && msg.iv !== 'none') {
+                plain = await decryptMessage(msg.ciphertext, msg.iv, otherPK, keypair.privateKey)
+              }
             }
           } catch { }
 

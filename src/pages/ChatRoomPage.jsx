@@ -34,11 +34,14 @@ export function ChatRoomPage() {
   const mediaRecorder = useRef(null)
   const audioChunks = useRef([])
   
+  const [audioBlob, setAudioBlob] = useState(null)
+  const [audioUrl, setAudioUrl] = useState(null)
+  
   const conv = conversations.find(c => c.id === convId)
   const roomMsgs = messages[convId] || []
-  const otherMember = conv?.members?.find(m => m.profile?.id !== user?.id)
+  const otherMember = conv?.members?.find(m => m.user_id !== user?.id)
   const recipientProfile = otherMember?.profile
-
+  
   useEffect(() => {
     if (convId && user && keypair) {
       if (conversations.length === 0) {
@@ -73,10 +76,30 @@ export function ChatRoomPage() {
     })
   }
 
+  const handleSendAudio = async () => {
+    if (!audioBlob) return
+    await sendFileMessage({
+      convId,
+      fileBlob: audioBlob,
+      mimeType: audioBlob.type,
+      type: 'audio',
+      keypair,
+      recipientProfile,
+      conv
+    })
+    setAudioBlob(null)
+    setAudioUrl(null)
+  }
+
+  const deleteAudioPreview = () => {
+    setAudioBlob(null)
+    setAudioUrl(null)
+  }
+
   const handlePointerDown = (msgId) => {
     pressTimer.current = setTimeout(() => {
       setPickerMsgId(msgId)
-    }, 500) // 500ms long press
+    }, 500)
   }
 
   const handlePointerUp = () => {
@@ -105,24 +128,19 @@ export function ChatRoomPage() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  const startRecording = async () => {
+  const startRecording = async (e) => {
+    e.preventDefault()
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       mediaRecorder.current = new MediaRecorder(stream)
       mediaRecorder.current.ondataavailable = e => { if (e.data.size > 0) audioChunks.current.push(e.data) }
-      mediaRecorder.current.onstop = async () => {
-        const audioBlob = new Blob(audioChunks.current, { type: 'audio/webm' })
+      mediaRecorder.current.onstop = () => {
+        const blob = new Blob(audioChunks.current, { type: 'audio/webm' })
+        const url = URL.createObjectURL(blob)
+        setAudioBlob(blob)
+        setAudioUrl(url)
         audioChunks.current = []
-        await sendFileMessage({
-          convId,
-          fileBlob: audioBlob,
-          mimeType: 'audio/webm',
-          type: 'audio',
-          keypair,
-          recipientProfile,
-          conv
-        })
-        stream.getTracks().forEach(t => t.stop()) // close mic
+        stream.getTracks().forEach(t => t.stop())
       }
       setIsRecording(true)
       setRecordingTime(0)
@@ -130,6 +148,7 @@ export function ChatRoomPage() {
       mediaRecorder.current.start()
     } catch (e) {
       console.error('Failed to start recording', e)
+      alert("Microphone inaccessible")
     }
   }
 
@@ -151,246 +170,252 @@ export function ChatRoomPage() {
   const displayName = conv.type === 'group' ? conv.name || 'Groupe' : recipientProfile?.display_name || 'Utilisateur'
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh' }}>
-      {/* Header */}
-      <header className="page-header" style={{ paddingBottom: 12 }}>
-        <button className="btn-icon" onClick={() => navigate('/chat')} style={{ marginRight: 8 }}>
-          <BiArrowBack />
-        </button>
-        <div className="avatar avatar-sm avatar-online">
-          {displayName[0]?.toUpperCase()}
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h1 style={{ fontSize: 16, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {displayName}
-          </h1>
-          <div style={{ fontSize: 12, color: 'var(--accent-2)' }}>E2EE Actif 🔒</div>
-        </div>
-      </header>
-
-      {/* Messages Wrapper */}
-      <div 
-        style={{ flex: 1, overflowY: 'auto', padding: '16px 0', scrollBehavior: 'smooth' }}
-        onPointerDown={closePicker} // Click outside closes picker
-      >
-        {roomMsgs.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-state-icon">🔒</div>
-            <p>Début de la conversation chiffrée de bout en bout avec {displayName}.</p>
+    <div className="chat-room-container">
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh' }}>
+        {/* Header */}
+        <header className="page-header" style={{ paddingBottom: 12 }}>
+          <button className="btn-icon" onClick={() => navigate('/chat')} style={{ marginRight: 8 }}>
+            <BiArrowBack />
+          </button>
+          <div className="avatar avatar-sm avatar-online">
+            {displayName[0]?.toUpperCase()}
           </div>
-        ) : (
-          roomMsgs.filter(m => !m.auto_delete_at || new Date(m.auto_delete_at) > new Date()).map((msg, i) => {
-            const isMe = msg.sender_id === user.id
-            const showPicker = pickerMsgId === msg.id
-            const repliedMsg = msg.reply_to_id ? roomMsgs.find(m => m.id === msg.reply_to_id) : null
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h1 style={{ fontSize: 16, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {displayName}
+            </h1>
+            <div style={{ fontSize: 12, color: 'var(--accent-2)' }}>E2EE Actif 🔒</div>
+          </div>
+        </header>
 
-            return (
-              <motion.div 
-                key={msg.id} 
-                className={`bubble-row ${isMe ? 'me' : 'them'}`}
-                initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                transition={{ duration: 0.2 }}
-                style={{ marginTop: i > 0 && roomMsgs[i-1].sender_id !== msg.sender_id ? 12 : 2 }}
-                // Swipe to reply
-                drag="x"
-                dragConstraints={{ left: 0, right: 0 }}
-                dragElastic={0.1}
-                onDragEnd={(e, info) => {
-                  if (Math.abs(info.offset.x) > 50) setReplyToMessage(msg)
-                }}
-              >
-                {/* Swipe Indicator (opacity mapped conceptually, but simplified here) */}
-                <div className="swipe-reply-indicator" style={{ opacity: 0 }}>↩</div>
-
-                {!isMe && conv.type === 'group' && (
-                  <div className="avatar avatar-sm" style={{ alignSelf: 'flex-end', width: 24, height: 24, fontSize: 10 }}>
-                    {msg.sender?.display_name?.[0]?.toUpperCase()}
-                  </div>
-                )}
-                
-                <div 
-                  style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '75%', position: 'relative' }}
-                  onPointerDown={() => handlePointerDown(msg.id)}
-                  onPointerUp={handlePointerUp}
-                  onPointerCancel={handlePointerUp}
-                  onPointerLeave={handlePointerUp}
-                  onContextMenu={(e) => { e.preventDefault(); setPickerMsgId(msg.id) }} // PC specific
-                >
-                  {showPicker && (
-                    <motion.div 
-                      className="reaction-picker"
-                      initial={{ opacity: 0, scale: 0.8, y: 10 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                    >
-                      {EMOJIS.map(e => (
-                        <button key={e} onClick={(ev) => { ev.stopPropagation(); handleReaction(msg.id, e) }}>{e}</button>
-                      ))}
-                    </motion.div>
-                  )}
-
-                  <div className={`bubble ${isMe ? 'me' : 'them'}`}>
-                    {repliedMsg && (
-                      <div className="bubble-reply-preview" onClick={() => {
-                        // In a real app we'd scroll to replied message
-                      }}>
-                        <div style={{ fontWeight: 600, marginBottom: 2, color: 'var(--text-primary)' }}>
-                          {repliedMsg.sender_id === user.id ? 'Vous' : (repliedMsg.sender?.display_name || 'Utilisateur')}
-                        </div>
-                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {repliedMsg.decryptedContent || <span style={{ fontStyle:'italic' }}>Message chiffré</span>}
-                        </div>
-                      </div>
-                    )}
-
-                    {msg.type === 'poll' ? (
-                      <PollBubble msg={msg} userId={user.id} />
-                    ) : msg.type === 'event' ? (
-                      <EventBubble msg={msg} />
-                    ) : msg.type === 'image' || msg.type === 'audio' ? (
-                      msg.decryptedContent ? (
-                        <FileLoader msgPayload={msg.decryptedContent} type={msg.type} />
-                      ) : (
-                        <span style={{ fontStyle: 'italic', opacity: 0.6 }}>Média chiffré illisible</span>
-                      )
-                    ) : (
-                      <div style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
-                        {msg.decryptedContent || <span style={{ fontStyle: 'italic', opacity: 0.6 }}>Message chiffré illisible</span>}
-                      </div>
-                    )}
-                    
-                    <div className="bubble-time">
-                      {format(new Date(msg.created_at), 'HH:mm')}
-                    </div>
-                  </div>
-
-                  {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                    <div className="bubble-reactions" style={{ justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
-                      {Object.entries(msg.reactions).map(([emoji, users]) => (
-                        <div key={emoji} className="reaction-chip" onClick={() => handleReaction(msg.id, emoji)}>
-                          {emoji} <span>{users.length}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </motion.div>
-            )
-          })
-        )}
-        <div ref={msgsEndRef} />
-      </div>
-
-      {/* Composer */}
-      <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-        {replyToMessage && (
-          <div className="composer-reply">
-            <div className="composer-reply-inner">
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>
-                  Réponse à {replyToMessage.sender_id === user.id ? 'Vous' : (replyToMessage.sender?.display_name || 'Utilisateur')}
-                </div>
-                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {replyToMessage.decryptedContent || 'Message chiffré'}
-                </div>
-              </div>
-              <button className="btn-icon" style={{ width: 28, height: 28, fontSize: 16 }} onClick={() => setReplyToMessage(null)}>
-                ×
-              </button>
+        {/* Messages Wrapper */}
+        <div 
+          style={{ flex: 1, overflowY: 'auto', padding: '16px 0', scrollBehavior: 'smooth' }}
+          onPointerDown={closePicker}
+        >
+          {roomMsgs.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">🔒</div>
+              <p>Début de la conversation chiffrée de bout en bout avec {displayName}.</p>
             </div>
-          </div>
-        )}
-        
-        {isRecording && (
-          <div style={{ padding: '8px 16px', color: '#ff6b6b', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 8, fontSize: 14 }}>
-            <motion.div animate={{ opacity: [1, 0.2, 1] }} transition={{ repeat: Infinity, duration: 1 }} style={{ width: 8, height: 8, borderRadius: 4, background: '#ff6b6b' }} />
-            Enregistrement... 0:{recordingTime.toString().padStart(2, '0')}
-          </div>
-        )}
-
-        {showPollCreator && (
-          <PollCreator 
-            convId={convId} 
-            keypair={keypair} 
-            recipientProfile={recipientProfile} 
-            conv={conv} 
-            onCancel={() => setShowPollCreator(false)} 
-          />
-        )}
-
-        {showCalendarModal && (
-          <CalendarModal 
-            convId={convId} 
-            msgs={roomMsgs} 
-            onClose={() => setShowCalendarModal(false)}
-            onOpenCreate={() => setShowEventCreator(true)}
-          />
-        )}
-
-        {showEventCreator && (
-          <EventCreator 
-            convId={convId} 
-            keypair={keypair} 
-            recipientProfile={recipientProfile} 
-            conv={conv} 
-            onCancel={() => setShowEventCreator(false)}
-          />
-        )}
-
-        <div className="composer">
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            accept="image/*" 
-            style={{ display: 'none' }} 
-            onChange={handleImageSelect}
-          />
-          <button 
-            className="btn-icon" 
-            style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)' }}
-            onClick={() => setShowPollCreator(!showPollCreator)}
-            disabled={isRecording}
-          >
-            <BiPlus size={24} />
-          </button>
-          <button 
-            className="btn-icon" 
-            style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)' }}
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isRecording}
-          >
-            <BiImageAlt size={22} />
-          </button>
-          <textarea
-            className="composer-input"
-            placeholder={isRecording ? "" : "Message chiffré..."}
-            value={text}
-            onChange={e => setText(e.target.value)}
-            rows={1}
-            disabled={isRecording}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault(); handleSend()
-              }
-            }}
-          />
-          {text.trim() || replyToMessage ? (
-            <button className="composer-send" onClick={handleSend} disabled={isRecording}>
-              <BiSend />
-            </button>
           ) : (
+            roomMsgs.filter(m => !m.auto_delete_at || new Date(m.auto_delete_at) > new Date()).map((msg, i) => {
+              const isMe = msg.sender_id === user.id
+              const showPicker = pickerMsgId === msg.id
+              const repliedMsg = msg.reply_to_id ? roomMsgs.find(m => m.id === msg.reply_to_id) : null
+
+              return (
+                <motion.div 
+                  key={msg.id} 
+                  className={`bubble-row ${isMe ? 'me' : 'them'}`}
+                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ duration: 0.2 }}
+                  style={{ marginTop: i > 0 && roomMsgs[i-1].sender_id !== msg.sender_id ? 12 : 2 }}
+                  drag="x"
+                  dragConstraints={{ left: 0, right: 0 }}
+                  dragElastic={0.1}
+                  onDragEnd={(e, info) => {
+                    if (Math.abs(info.offset.x) > 50) setReplyToMessage(msg)
+                  }}
+                >
+                  <div className="swipe-reply-indicator" style={{ opacity: 0 }}>↩</div>
+
+                  {!isMe && conv.type === 'group' && (
+                    <div className="avatar avatar-sm" style={{ alignSelf: 'flex-end', width: 24, height: 24, fontSize: 10 }}>
+                      {msg.sender?.display_name?.[0]?.toUpperCase()}
+                    </div>
+                  )}
+                  
+                  <div 
+                    style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '75%', position: 'relative' }}
+                    onPointerDown={() => handlePointerDown(msg.id)}
+                    onPointerUp={handlePointerUp}
+                    onPointerCancel={handlePointerUp}
+                    onPointerLeave={handlePointerUp}
+                    onContextMenu={(e) => { e.preventDefault(); setPickerMsgId(msg.id) }}
+                  >
+                    {showPicker && (
+                      <motion.div 
+                        className="reaction-picker"
+                        initial={{ opacity: 0, scale: 0.8, y: 10 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                      >
+                        {EMOJIS.map(e => (
+                          <button key={e} onClick={(ev) => { ev.stopPropagation(); handleReaction(msg.id, e) }}>{e}</button>
+                        ))}
+                      </motion.div>
+                    )}
+
+                    <div className={`bubble ${isMe ? 'me' : 'them'}`}>
+                      {repliedMsg && (
+                        <div className="bubble-reply-preview">
+                          <div style={{ fontWeight: 600, marginBottom: 2, color: 'var(--text-primary)' }}>
+                            {repliedMsg.sender_id === user.id ? 'Vous' : (repliedMsg.sender?.display_name || 'Utilisateur')}
+                          </div>
+                          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {repliedMsg.decryptedContent || <span style={{ fontStyle:'italic' }}>Message chiffré</span>}
+                          </div>
+                        </div>
+                      )}
+
+                      {msg.type === 'poll' ? (
+                        <PollBubble msg={msg} userId={user.id} />
+                      ) : msg.type === 'event' ? (
+                        <EventBubble msg={msg} />
+                      ) : msg.type === 'image' || msg.type === 'audio' ? (
+                        msg.decryptedContent ? (
+                          <FileLoader msgPayload={msg.decryptedContent} type={msg.type} />
+                        ) : (
+                          <span style={{ fontStyle: 'italic', opacity: 0.6 }}>Média chiffré illisible</span>
+                        )
+                      ) : (
+                        <div style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
+                          {msg.decryptedContent || <span style={{ fontStyle: 'italic', opacity: 0.6 }}>Message chiffré illisible</span>}
+                        </div>
+                      )}
+                      
+                      <div className="bubble-time">
+                        {format(new Date(msg.created_at), 'HH:mm')}
+                      </div>
+                    </div>
+
+                    {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                      <div className="bubble-reactions" style={{ justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
+                        {Object.entries(msg.reactions).map(([emoji, users]) => (
+                          <div key={emoji} className="reaction-chip" onClick={() => handleReaction(msg.id, emoji)}>
+                            {emoji} <span>{users.length}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )
+            })
+          )}
+          <div ref={msgsEndRef} />
+        </div>
+
+        {/* Composer Section */}
+        <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+          {replyToMessage && (
+            <div className="composer-reply">
+              <div className="composer-reply-inner">
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>
+                    Réponse à {replyToMessage.sender_id === user.id ? 'Vous' : (replyToMessage.sender?.display_name || 'Utilisateur')}
+                  </div>
+                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {replyToMessage.decryptedContent || 'Message chiffré'}
+                  </div>
+                </div>
+                <button className="btn-icon" style={{ width: 28, height: 28, fontSize: 16 }} onClick={() => setReplyToMessage(null)}>
+                  ×
+                </button>
+              </div>
+            </div>
+          )}
+          
+          {audioUrl && (
+            <div style={{ padding: '12px 16px', background: 'var(--bg-input)', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+              <audio src={audioUrl} controls style={{ flex: 1, height: 32 }} />
+              <button className="btn-icon" style={{ borderColor: '#ff6b6b', color: '#ff6b6b' }} onClick={deleteAudioPreview}>×</button>
+              <button className="btn-icon" style={{ background: 'var(--accent-grad)', color: '#fff' }} onClick={handleSendAudio}><BiSend /></button>
+            </div>
+          )}
+
+          {isRecording && (
+            <div style={{ padding: '8px 16px', color: '#ff6b6b', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 8, fontSize: 14 }}>
+              <motion.div animate={{ opacity: [1, 0.2, 1] }} transition={{ repeat: Infinity, duration: 1 }} style={{ width: 8, height: 8, borderRadius: 4, background: '#ff6b6b' }} />
+              Enregistrement... 0:{recordingTime.toString().padStart(2, '0')}
+            </div>
+          )}
+
+          {showPollCreator && (
+            <PollCreator 
+              convId={convId} 
+              keypair={keypair} 
+              recipientProfile={recipientProfile} 
+              conv={conv} 
+              onCancel={() => setShowPollCreator(false)} 
+            />
+          )}
+
+          {showCalendarModal && (
+            <CalendarModal 
+              convId={convId} 
+              msgs={roomMsgs} 
+              onClose={() => setShowCalendarModal(false)}
+              onOpenCreate={() => setShowEventCreator(true)}
+            />
+          )}
+
+          {showEventCreator && (
+            <EventCreator 
+              convId={convId} 
+              keypair={keypair} 
+              recipientProfile={recipientProfile} 
+              conv={conv} 
+              onCancel={() => setShowEventCreator(false)}
+            />
+          )}
+
+          <div className="composer">
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              accept="image/*" 
+              style={{ display: 'none' }} 
+              onChange={handleImageSelect}
+            />
             <button 
               className="btn-icon" 
-              style={{ background: 'transparent', border: 'none', color: isRecording ? '#ff6b6b' : 'var(--text-secondary)' }}
-              onPointerDown={startRecording}
-              onPointerUp={stopRecording}
-              onPointerCancel={stopRecording}
-              onPointerLeave={stopRecording}
-              onContextMenu={e => e.preventDefault()} // prevent context menu on long press
+              style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)' }}
+              onClick={() => setShowPollCreator(!showPollCreator)}
+              disabled={isRecording}
             >
-              <BiMicrophone size={22} />
+              <BiPlus size={24} />
             </button>
-          )}
+            <button 
+              className="btn-icon" 
+              style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)' }}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isRecording}
+            >
+              <BiImageAlt size={22} />
+            </button>
+            <textarea
+              className="composer-input"
+              placeholder={isRecording ? "" : "Message chiffré..."}
+              value={text}
+              onChange={e => setText(e.target.value)}
+              rows={1}
+              disabled={isRecording}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault(); handleSend()
+                }
+              }}
+            />
+            {text.trim() || replyToMessage ? (
+              <button className="composer-send" onClick={handleSend} disabled={isRecording}>
+                <BiSend />
+              </button>
+            ) : (
+              <button 
+                className="btn-icon" 
+                style={{ background: 'transparent', border: 'none', color: isRecording ? '#ff6b6b' : 'var(--text-secondary)' }}
+                onPointerDown={startRecording}
+                onPointerUp={stopRecording}
+                onPointerCancel={stopRecording}
+                onPointerLeave={stopRecording}
+                onContextMenu={e => e.preventDefault()}
+              >
+                <BiMicrophone size={22} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
