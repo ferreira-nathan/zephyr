@@ -50,25 +50,23 @@ export const useContactsStore = create((set, get) => ({
      if (existing && existing.length > 0) return existing[0].id
      
      // Otherwise create new
-     const { data: newConv, error } = await supabase
-       .from('conversations')
-       .insert({ type: 'direct' })
-       .select()
-       .single()
-       
-     if (error || !newConv) return null
-          // Add members
-      const { error: memberError } = await supabase.from('conversation_members').insert([
-        { conversation_id: newConv.id, user_id: myUserId, role: 'admin' },
-        { conversation_id: newConv.id, user_id: contactId, role: 'member' }
-      ])
-      
-      if (memberError) {
-        console.error('Member insert error:', memberError)
-        return null
-      }
-      
-      return newConv.id
+     if (error || !newConv) {
+       alert("Erreur création conversation: " + (error?.message || "Inconnue"));
+       return null;
+     }
+     
+     // Add members
+     const { error: memberError } = await supabase.from('conversation_members').insert([
+       { conversation_id: newConv.id, user_id: myUserId, role: 'admin' },
+       { conversation_id: newConv.id, user_id: contactId, role: 'member' }
+     ])
+     
+     if (memberError) {
+       alert("Erreur membres: " + memberError.message + " (Contact ID: " + contactId + ")");
+       return null;
+     }
+     
+     return newConv.id;
   },
 
   createGroupConversation: async (myUserId, myKeyPair, name, memberIds) => {
